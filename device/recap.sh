@@ -28,8 +28,6 @@
 # failing script with an error message.
 
 DB=${RECAP_DB:-/mnt/onboard/.kobo/KoboReader.sqlite}
-HALFLINES=30
-LINECOLS=58
 MAXSUMMARY=600
 BIG=100000
 
@@ -45,7 +43,7 @@ esc() { printf '%s' "$1" | sed "s/'/''/g"; }
 html() { sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
 
 clip() {
-    awk -v m="$MAXSUMMARY" '{
+    awk -v m="${1:-$MAXSUMMARY}" '{
         if (length($0) <= m) { print; next }
         s = substr($0, 1, m)
         p = match(s, /.*[.!?] /)
@@ -87,14 +85,18 @@ for cand in "$RECAP_SRC" "$PATHNAME" \
             "$(printf '%s' "$PATHNAME" | sed 's/\.kepub\.epub$/_with_ai_recaps.kepub.epub/')" \
             "$(printf '%s' "$PATHNAME" | sed 's/\.kepub\.epub$/_with_recaps.kepub.epub/')"; do
     [ -n "$cand" ] && [ -f "$cand" ] || continue
-    hit=$(unzip -l "$cand" 2>/dev/null | awk '{print $NF}' | grep -E 'recaps/(parts|recaps)\.tsv$' | head -n 1)
+    hit=$(unzip -l "$cand" 2>/dev/null | awk '{print $NF}' | grep -E 'recaps/(parts|recaps)\.tsv$'  | awk -F/ '$NF=="parts.tsv" {print; f=1; exit} {r=r?r:$0} END{if(!f && r) print r}')
     if [ -n "$hit" ]; then
         SRC="$cand"
         DIR="${hit%/*}/"
         break
     fi
 done
-[ -z "$SRC" ] && { printf '<p><b>%s</b></p><p>This book has no recap data embedded yet.</p>\n' "$(printf '%s' "$TITLE" | html)"; exit 0; }
+[ -z "$SRC" ] && {
+    printf '<!--TITLE:%s-->\n' "$(printf '%s' "$TITLE" | html)"
+    printf '<p style="font-family:Georgia,serif; color:#000000; line-height:150%%">This book has no recap data embedded yet.</p>\n'
+    exit 0
+}
 
 get() { unzip -p "$SRC" "${DIR}$1" 2>/dev/null; }
 
@@ -102,11 +104,6 @@ PARTS=$(get parts.tsv)
 if [ -z "$PARTS" ]; then
     # older book: a chapter is one passage that ends with the chapter
     PARTS=$(get recaps.tsv | awk -F'\t' -v big="$BIG" 'NF>=4 {printf "%s\t%s\t%d\t%s\t%s\n", $1, $2, big-1, $3, $4}')
-fi
-# people: order, path, paragraph, name, met|heard, times seen, description
-PEOPLE=$(get people.tsv)
-if [ -z "$PEOPLE" ]; then
-    PEOPLE=$(get cast.tsv | awk -F'\t' -v big="$BIG" 'NF>=4 {n[$3]++; printf "%s\t%s\t%d\t%s\tmet\t%d\t%s\n", $1, $2, big-1, $3, n[$3], $4}')
 fi
 SPINE=$(get spine.tsv)
 
@@ -126,8 +123,10 @@ fi
 [ -z "$PARA" ] && PARA=0
 POS=$((ORDER * BIG + PARA))
 
-if [ "$GAP" -gt 0 ] 2>/dev/null; then
-    WHEN="Last read $GAP day(s) ago"
+if [ "$GAP" -eq 1 ] 2>/dev/null; then
+    WHEN="Last read 1 day ago"
+elif [ "$GAP" -gt 1 ] 2>/dev/null; then
+    WHEN="Last read $GAP days ago"
 else
     WHEN="Last read today"
 fi
@@ -154,7 +153,6 @@ if [ -n "$PREV" ]; then
     PLABEL=$(printf '%s\n' "$BEHIND" | awk -F'\t' -v o="$PREV" '$1==o {print $2; exit}')
     PSUMMARY=$(printf '%s\n' "$BEHIND" | awk -F'\t' -v o="$PREV" '$1==o {print $3}' | tr '\n' ' ')
 fi
-NOW=$(printf '%s' "$NOW" | html)
 EARLIER=$(printf '%s' "$EARLIER" | clip | html)
 PSUMMARY=$(printf '%s' "$PSUMMARY" | clip | html)
 
@@ -176,127 +174,91 @@ if [ -n "$PARA" ] && [ -n "$SEG" ] && [ "$PARA" -ge 0 ] 2>/dev/null; then
                }')
 fi
 
-SANS='font-family:sans-serif'
-USED=0
-line_cost() { echo $(( ($1 + LINECOLS - 1) / LINECOLS )); }
-# page break when the next block will not fit on this page
-room() {
-    if [ $((USED + $1)) -gt "$HALFLINES" ] && [ "$USED" -gt 0 ]; then
-        printf '\n<!--PAGE-->\n'
-        USED=0
-    fi
-    USED=$((USED + $1))
-}
-small() { room 2; printf '<p style="%s; font-size:68%%; color:#666666; margin:0px 0px 12px 0px">%s</p>' "$SANS" "$1"; }
-head1() { printf '<p style="%s; font-size:124%%; margin:0px"><b>%s</b></p>' "$SANS" "$1"; }
-body() { printf '<p style="margin:0px; line-height:152%%">%s</p>' "$1"; }
-sub1() { printf '<p style="%s; font-size:84%%; margin:24px 0px 8px 0px"><b>%s</b></p>' "$SANS" "$1"; }
+# ---------------------------------------------------------------- layout
+# One look: Georgia (Nickel falls back to its default serif), black text,
+# small upper-case labels, 150% body lines, one rule. Page 1 runs in story
+# order and always ends on PICK UP HERE, the place the reader goes back to.
+#
+# Page budget, in tenths of a body line. A Clara-class screen (1072x1448,
+# 300 ppi) gives the label about 1448 - 130 title bar - 68 margins - 110 nav
+# = ~1140 px of height and ~970 px of width. At the 34 px body size and 150%
+# leading that is 22 lines of about 56 Georgia characters; one line is held
+# back for rounding, because overflowing is worse than a short page.
+BUDGET=210
+LINECOLS=56
+LABEL=15        # 70% text plus the space above it
+RULE=10
+FONT='font-family:Georgia,serif; color:#000000'
 
-small "$(printf '%s' "$WHEN" | tr '[:lower:]' '[:upper:]')"
-if [ -n "$LINE" ]; then
-    room $(( 3 + 2 * $(line_cost ${#LINE}) ))
-    sub1 "Your page begins"
-    printf '<p style="margin:0px; line-height:152%%"><i>&#8220;%s&#8221;</i></p>' "$LINE"
-fi
+lines() { echo $(( ( ${#1} + LINECOLS - 1) / LINECOLS * 10 )); }
+upper() { awk '{print toupper($0)}'; }
+label() { printf '<p style="%s; font-size:70%%; margin:18px 0px 4px 0px">%s</p>\n' "$FONT" "$(printf '%s' "$1" | upper | html)"; }
+meta() { printf '<p style="%s; font-size:70%%; margin:0px 0px 4px 0px">%s</p>\n' "$FONT" "$(printf '%s' "$1" | upper | html)"; }
+body() { printf '<p style="%s; margin:0px; line-height:150%%">%s</p>\n' "$FONT" "$1"; }
+rule() { printf '<hr>\n'; }
+
+USED=0
+newpage() { printf '\n<!--PAGE-->\n'; USED=0; }
+room() { if [ $((USED + $1)) -gt "$BUDGET" ] && [ "$USED" -gt 0 ]; then newpage; fi; USED=$((USED + $1)); }
+
+# The line the page starts on, without the book's own quote marks, so it is
+# not quoted twice.
+LINE=$(printf '%s' "$LINE" | sed -e 's/^ *//; s/ *$//' \
+       -e 's/^\(&quot;\|&#8220;\|&#x201[cC];\|&ldquo;\|&#8216;\|&lsquo;\|“\|‘\|"\|'"'"'\)*//' \
+       -e 's/\(&quot;\|&#8221;\|&#x201[dD];\|&rdquo;\|&#8217;\|&rsquo;\|”\|’\|"\|'"'"'\)*$//')
+
+pickup() {
+    if [ -n "$LINE" ]; then
+        label "Pick up here"
+        printf '<p style="%s; margin:0px; line-height:150%%"><i>&#8220;%s&#8221;</i></p>\n' "$FONT" "$LINE"
+    fi
+}
+PICK=0
+[ -n "$LINE" ] && PICK=$((RULE + LABEL + $(lines "$LINE")))
+
+printf '<!--TITLE:%s-->\n' "$(printf '%s' "$TITLE" | html)"
+
+if [ -n "$CURLABEL" ]; then META="$CURLABEL · $WHEN"; else META="$WHEN"; fi
+meta "$META"
+USED=$LABEL
+
 if [ -n "$NOW" ]; then
-    room $(( 4 + 2 * $(line_cost ${#NOW}) ))
-    head1 "Just before your page"
-    printf '<p style="font-size:84%%; color:#666666; margin:5px 0px 0px 0px">%s</p><hr>' \
-        "$(printf '%s' "$CURLABEL" | html)"
-    body "$NOW"
+    # Just-before plus the pick-up line must fit; clip the passage if not.
+    ROOM=$(( (BUDGET - USED - LABEL - PICK) / 10 * LINECOLS ))
+    [ "$ROOM" -lt 120 ] && ROOM=120
+    NOW=$(printf '%s' "$NOW" | clip "$ROOM" | html)
+    NEED=$((LABEL + $(lines "$NOW") + PICK))
+    SPILL=""
     if [ -n "$EARLIER" ]; then
-        room $(( 3 + 2 * $(line_cost ${#EARLIER}) ))
-        sub1 "Earlier in $(printf '%s' "$CURLABEL" | html)"
+        if [ $((USED + LABEL + $(lines "$EARLIER") + NEED)) -le "$BUDGET" ]; then
+            label "Earlier in $CURLABEL"
+            body "$EARLIER"
+            USED=$((USED + LABEL + $(lines "$EARLIER")))
+        else
+            SPILL=1
+        fi
+    fi
+    label "Just before your page"
+    body "$NOW"
+    [ -n "$LINE" ] && { rule; pickup; }
+    USED=$BUDGET
+    if [ -n "$SPILL" ]; then
+        newpage
+        label "Earlier in $CURLABEL"
         body "$EARLIER"
+        USED=$((LABEL + $(lines "$EARLIER")))
     fi
     if [ -n "$PSUMMARY" ]; then
-        room $(( 3 + 2 * $(line_cost ${#PSUMMARY}) ))
-        sub1 "Before that, $(printf '%s' "$PLABEL" | html)"
-        printf '<p style="font-size:89%%; color:#555555; margin:0px; line-height:152%%">%s</p>' "$PSUMMARY"
+        room $((LABEL + $(lines "$PSUMMARY")))
+        label "Further back · $PLABEL"
+        body "$PSUMMARY"
     fi
 elif [ -n "$PSUMMARY" ]; then
-    room $(( 4 + 2 * $(line_cost ${#PSUMMARY}) ))
-    head1 "You stopped after $(printf '%s' "$PLABEL" | html)"
-    if [ -n "$CURLABEL" ]; then
-        printf '<p style="font-size:84%%; color:#666666; margin:5px 0px 0px 0px">You have just started %s.</p>' \
-            "$(printf '%s' "$CURLABEL" | html)"
-    fi
-    printf '<hr>'
+    label "$PLABEL"
     body "$PSUMMARY"
+    [ -n "$LINE" ] && { rule; pickup; }
 else
-    room 4
-    head1 "$(printf '%s' "$TITLE" | html)"
-    printf '<p style="margin-top:12px">You are only a few pages in, so there is nothing to recap yet.</p>'
+    printf '<p style="%s; margin:12px 0px 0px 0px; line-height:150%%">You are only a few pages in, so there is nothing to recap yet.</p>\n' "$FONT"
+    [ -n "$LINE" ] && { rule; pickup; }
 fi
-
-# ---------------------------------------------------------------- who's who
-# Everyone whose first mention is at or before your page. Per person: the
-# latest status (met beats heard) and the latest description at or before
-# your page, ranked by how many passages they have turned up in so far -
-# recency buried the leads (Harry ranked 81st of 83 by chapter 13 of book 5).
-# Met and heard-of are listed separately; nobody is cut off the list.
-CAST=$(printf '%s\n' "$PEOPLE" \
-       | awk -F'\t' -v pos="$POS" -v big="$BIG" '
-         function clean(t,   low, p) {
-             low = tolower(t)
-             if (low !~ FATE) return t
-             p = index(low, " who ")
-             if (p < 2) p = index(low, ", ")
-             if (p < 2) return ""
-             t = substr(t, 1, p - 1)
-             sub(/[ ,]+$/, "", t)
-             if (tolower(t) ~ FATE) return ""
-             return t
-         }
-         BEGIN {
-             FATE = "kill|dies|died|murder|betray|traitor|reveal|turns out|secretly|is actually|later becomes|will be|survives|sacrific|tortur|imprison|executed|doomed|his fate|her fate|their fate"
-         }
-         NF >= 6 && ($1 * big + $3) <= pos {
-             nm = $4
-             if (!(nm in seen)) order[++c] = nm
-             # 7 columns carry a running count; the first passage layout had
-             # 6 and one row per appearance, so count the rows instead
-             if (NF >= 7) { seen[nm] = $6 + 0; desc = $7 } else { seen[nm]++; desc = $6 }
-             if ($5 == "met") met[nm] = 1
-             t = clean(desc)
-             if (t != "") d[nm] = t
-             if (t == "the main character") hero[nm] = 1
-         }
-         END {
-             for (i = 1; i <= c; i++) {
-                 nm = order[i]
-                 rank = (nm in hero) ? 99999999 : seen[nm] * 10000 + (c - i)
-                 printf "%s\t%d\t%s\t%s\n", (nm in met) ? "met" : "heard", rank, nm,
-                        (nm in d ? d[nm] : "")
-             }
-         }' | sort -t "$(printf '\t')" -k2,2nr)
-
-render() {
-    # $1 = met|heard, $2 = heading; pages itself against the line budget
-    rows=$(printf '%s\n' "$CAST" | awk -F'\t' -v s="$1" '$1==s {printf "%s\t%s\n", $3, $4}')
-    n=$(printf '%s\n' "$rows" | grep -c .)
-    [ "$n" -eq 0 ] 2>/dev/null && return
-    printf '\n<!--PAGE-->\n'
-    small "$2 ($n)"
-    printf '%s\n' "$rows" | html \
-        | awk -F'\t' -v budget="$HALFLINES" -v w="$LINECOLS" '
-            function rows(t,   k) { k = int((length(t) + w - 1) / w); return k < 1 ? 1 : k }
-            BEGIN { used = 5; pending = 0 }
-            NF {
-                cost = 2 * rows($1 "  " $2) + 1
-                if (used + cost > budget) {
-                    print ""
-                    print "<!--PAGE-->"
-                    used = 0
-                    pending = 0
-                }
-                if (pending) print "<hr>"
-                printf "<p style=\"margin:0px 0px 12px 0px; line-height:148%%\"><b style=\"font-family:sans-serif; font-size:92%%\">%s</b>&nbsp;&nbsp;%s</p>\n", $1, $2
-                pending = 1
-                used += cost
-            }'
-}
-
-render met "WHO YOU HAVE MET"
-render heard "WHO YOU HAVE HEARD OF"
 exit 0

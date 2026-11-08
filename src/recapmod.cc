@@ -13,7 +13,9 @@
 #include <QIODevice>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QSizePolicy>
 #include <QStackedWidget>
+#include <QtGlobal>
 #include <QEvent>
 #include <QStringList>
 #include <QByteArray>
@@ -107,7 +109,7 @@ void RecapPager::step() {
     const int i = m_stack->currentIndex() + m_delta;
     if (i >= 0 && i < total) {
         m_stack->setCurrentIndex(i);
-        m_counter->setText(QStringLiteral("Page %1 of %2").arg(i + 1).arg(total));
+        m_counter->setText(QStringLiteral("%1 / %2").arg(i + 1).arg(total));
         refresh();
     }
 }
@@ -168,9 +170,32 @@ static void showRecapDialog() {
     // The script marks its own page breaks. It knows how many table rows it
     // emitted; a line budget here could only guess, and guessed wrong once
     // the cast became a table.
+    // The script's first line may be <!--TITLE:escaped book title-->. It
+    // becomes the dialog title and is removed from the page text.
+    QString text = recapText();
+    QString title = QStringLiteral("Recap");
+    if (text.startsWith(QStringLiteral("<!--TITLE:"))) {
+        const int end = text.indexOf(QStringLiteral("-->"));
+        if (end > 0) {
+            QString t = text.mid(10, end - 10).trimmed();
+            t.replace(QStringLiteral("&lt;"), QStringLiteral("<"));
+            t.replace(QStringLiteral("&gt;"), QStringLiteral(">"));
+            t.replace(QStringLiteral("&quot;"), QStringLiteral("\""));
+            t.replace(QStringLiteral("&#39;"), QStringLiteral("'"));
+            t.replace(QStringLiteral("&amp;"), QStringLiteral("&"));
+            if (!t.isEmpty())
+                title = t;
+            text = text.mid(end + 3);
+        }
+    }
+
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+    const auto skipEmpty = Qt::SkipEmptyParts;
+#else
+    const auto skipEmpty = QString::SkipEmptyParts;
+#endif
     QStringList pages;
-    foreach (const QString &chunk,
-             recapText().split(QStringLiteral("<!--PAGE-->"), QString::SkipEmptyParts)) {
+    foreach (const QString &chunk, text.split(QStringLiteral("<!--PAGE-->"), skipEmpty)) {
         const QString t = chunk.trimmed();
         if (!t.isEmpty())
             pages << t;
@@ -191,9 +216,24 @@ static void showRecapDialog() {
 
     if (pages.size() > 1) {
         QHBoxLayout *nav = new QHBoxLayout();
-        QLabel *counter = new QLabel(QStringLiteral("Page 1 of %1").arg(pages.size()), content);
-        QWidget *prev = makeButton(content, QStringLiteral("Previous"));
-        QWidget *next = makeButton(content, QStringLiteral("Next"));
+        QLabel *counter = new QLabel(QStringLiteral("1 / %1").arg(pages.size()), content);
+        counter->setAlignment(Qt::AlignCenter);
+        QWidget *prev = makeButton(content, QStringLiteral("Back"));
+        QWidget *next = makeButton(content, QStringLiteral("More"));
+        // Both buttons keep their space when hidden and share one width, so
+        // the counter stays centred on the first and last page.
+        if (prev && next) {
+            const int w = qMax(prev->sizeHint().width(), next->sizeHint().width());
+            prev->setFixedWidth(w);
+            next->setFixedWidth(w);
+        }
+        QWidget *buttons[2] = { prev, next };
+        for (int k = 0; k < 2; k++) {
+            if (!buttons[k]) continue;
+            QSizePolicy sp = buttons[k]->sizePolicy();
+            sp.setRetainSizeWhenHidden(true);
+            buttons[k]->setSizePolicy(sp);
+        }
         if (prev) nav->addWidget(prev, 0);
         nav->addStretch(1);
         nav->addWidget(counter, 0);
@@ -225,7 +265,7 @@ static void showRecapDialog() {
         return;
     }
     if (N3Dialog_setTitle)
-        N3Dialog_setTitle(dialog, QStringLiteral("Recap"));
+        N3Dialog_setTitle(dialog, title);
 
     QScreen *screen = QApplication::primaryScreen();
     if (screen) {
