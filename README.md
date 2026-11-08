@@ -7,11 +7,16 @@ While reading, tap the **Recap** button in the reading bar. Nickel's own dialog
 opens with:
 
 - how long ago you last read the book,
-- a summary of the last chapter you finished (and the one before it),
-- **Who you have met** — the characters so far, most important first.
+- what has happened so far in the chapter you are in, up to your page, and
+  the chapter before it,
+- **Who you have met** and **Who you have heard of** — everyone the book has
+  named so far, including people only mentioned or told about, with who they
+  are to the main character. Nobody is cut off the list.
 
-Only chapters at or before your position are used. If you are partway through
-a chapter, it is left out, and so are the people you haven't met yet.
+Only text behind your position is used: a passage counts once your bookmark is
+past its last paragraph, and a person appears from the paragraph that first
+names them. Books recapped before passages existed still work, a whole chapter
+at a time.
 
 Everything works offline. The recaps are written on a computer beforehand and
 embedded in each book; nothing is looked up on the device.
@@ -20,8 +25,14 @@ embedded in each book; nothing is looked up on the device.
 
 Any kepub that carries recap data:
 
-- `EPUB/recaps/recaps.tsv` — one row per chapter
-- `EPUB/recaps/cast.tsv` — the characters and where they first appear
+- `recaps/parts.tsv` — passage recaps, each with the paragraph it ends on
+- `recaps/people.tsv` — everyone met or heard of, from the paragraph that first
+  names them
+- `recaps/spine.tsv` — the book's reading order
+- `recaps/recaps.tsv` and `recaps/cast.tsv` — chapter-level, for older books
+
+The `recaps/` folder sits beside the book's OPF (`EPUB/`, `OEBPS/`, or the root
+— the script finds it). epubkit writes all of these.
 
 Both **sideloaded books** and **books synced from a server** such as Grimmory,
 Calibre-Web or Komga are supported. Synced books are stored in

@@ -8,20 +8,26 @@
 ## What you'll see
 
 - **"Last read N day(s) ago"** — from the book's last-read date.
-- **"You stopped after …"** — the last chapter you finished, summarised.
-  If you are partway through a chapter, a line says so; that chapter is never
-  summarised, because its summary would give away the rest of it.
+- **"So far in …"** — the chapter you are in, summarised up to your page.
+  A passage is included once your bookmark is past its last paragraph, so
+  nothing ahead of you is described.
+- **"You stopped after …"** — shown instead when you have only just started a
+  chapter: the last chapter you finished.
 - **"Before that, …"** — the chapter before, for context.
-- **"Who you have met"** — up to 30 people, ranked by how often they have
-  appeared so far.
+- **"Who you have met"** — everyone who has appeared so far, main character
+  first, then by how often they have turned up, with who they are to the main
+  character as of your page.
+- **"Who you have heard of"** — people only mentioned, talked about or told
+  of in a story, from the paragraph that first names them. They move up to
+  "met" at the paragraph where they appear.
 
 ## Messages
 
 - **"This book has no recap data embedded yet."** — the book carries no
-  `EPUB/recaps/recaps.tsv`. Recaps are generated on a computer and embedded
+  `recaps/recaps.tsv`. Recaps are generated on a computer and embedded
   before the book goes onto the Kobo.
-- **"You are at the very beginning, so there is nothing to recap."** — you
-  haven't finished a chapter yet.
+- **"You are only a few pages in, so there is nothing to recap yet."** — you
+  have not finished the first passage yet.
 - **"No sqlite3 available."** — install NickelHardcover, or put a `sqlite3`
   binary in `.adds/Recap/`.
 
